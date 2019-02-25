@@ -2,11 +2,12 @@
 #include <SFML/Graphics.hpp>
 
 float zoom = 1.0f;
+sf::Texture trash_can;
 
 class WireWorld: public sf::Drawable, public sf::Transformable
 {
     public:
-        enum CellType : unsigned char {Empty, ElectronHead, ElectronTail, Conductor};
+        enum CellType : unsigned char {Empty, Conductor, ElectronHead, ElectronTail};
 
     public:
         WireWorld(int rows, int columns, int width, int height):
@@ -23,9 +24,11 @@ class WireWorld: public sf::Drawable, public sf::Transformable
         {
             srand(time(NULL));
         }
+        ~WireWorld() {};
 
         void trigPause() {pause = !pause;}
         void trigHidden() {hidden= !hidden;}
+        void fillAll(WireWorld::CellType type) {std::fill(m_World.begin(), m_World.end(), type);}
 
         void setCell(WireWorld::CellType type, sf::Vector2f pos)
         {
@@ -86,10 +89,10 @@ class WireWorld: public sf::Drawable, public sf::Transformable
             rect.setOutlineThickness((zoom > 2.0f) ? 0 : -1);
             for(int i = 1; i < rows; ++i) for(int j = 1; j < columns; ++j)
             {
-                if(m_World[i * columns + j]         == WireWorld::CellType::Empty)          rect.setFillColor(sf::Color::Black);
+                if(m_World[i * columns + j]         == WireWorld::CellType::Empty)          rect.setFillColor(sf::Color::Transparent);
                 else if(m_World[i * columns + j]    == WireWorld::CellType::ElectronHead)   rect.setFillColor(sf::Color::Blue);
                 else if(m_World[i * columns + j]    == WireWorld::CellType::ElectronTail)   rect.setFillColor(sf::Color::Red);
-                else if(m_World[i * columns + j]    == WireWorld::CellType::Conductor && hidden)   rect.setFillColor(sf::Color::Black);
+                else if(m_World[i * columns + j]    == WireWorld::CellType::Conductor && hidden)   rect.setFillColor(sf::Color::Transparent);
                 else if(m_World[i * columns + j]    == WireWorld::CellType::Conductor)   rect.setFillColor(sf::Color::Yellow);
                 rect.setPosition(j * width, i * height);
                 rt.draw(rect, rs);
@@ -104,13 +107,88 @@ class WireWorld: public sf::Drawable, public sf::Transformable
         float FrameRate;
 };
 
+class Gui: public sf::Drawable, public sf::Transformable
+{
+    public:
+        Gui(sf::Vector2f windSize, sf::Vector2f viewSize):
+            hover(-1),
+            option(WireWorld::CellType::Conductor),
+            buttons(0),
+            bg(sf::Vector2f(windSize.x - viewSize.x, windSize.y)),
+            s()
+        {
+            for(int i = 0; i < 4; ++i)
+            {
+                buttons.push_back(sf::RectangleShape(sf::Vector2f(50, 50)));
+                buttons[i].setPosition(737, i * 100 + 100);
+                buttons[i].setOutlineThickness(4);
+                buttons[i].setOutlineColor(sf::Color::Transparent);
+            }
+            buttons[0].setFillColor(sf::Color::White);
+            buttons[1].setFillColor(sf::Color::Yellow);
+            buttons[2].setFillColor(sf::Color::Blue);
+            buttons[3].setFillColor(sf::Color::White);
+            trash_can.loadFromFile("assets/trash_can.png");
+            s.setTexture(trash_can);
+            s.scale(50 / 64.0f, 50 / 64.0f);
+            s.setPosition(buttons[3].getPosition());
+            bg.setPosition(viewSize.x, 0);
+            bg.setFillColor(sf::Color(64, 64, 64));
+        }
+        ~Gui() {}
+
+        bool getHover() const {return (hover == -1);}
+        void update() {}
+        WireWorld::CellType getSelectedCellType() const {return option;}
+
+        unsigned char setAction()
+        {
+            if(hover > 2) return hover - 2;
+            option = (WireWorld::CellType)((hover == -1) ? 0 : (unsigned char)hover);
+            return 0;
+        }
+
+        void checkHover(sf::Vector2f pos)
+        {
+            hover = -1;
+            for(unsigned int i = 0; i < buttons.size(); ++i)
+            {
+                buttons[i].setOutlineColor(sf::Color::Transparent);
+                if(buttons[i].getGlobalBounds().contains(pos))
+                {
+                    hover = i;
+                    buttons[i].setOutlineColor(sf::Color::Red);
+                    break;
+                }
+            }
+        }
+
+        void draw(sf::RenderTarget& rt, sf::RenderStates rs) const
+        {
+            rs.texture = NULL;
+            rs.transform *= getTransform();
+            rt.draw(bg, rs);
+            for(unsigned int i = 0; i < buttons.size(); ++i)
+                rt.draw(buttons[i], rs);
+            rt.draw(s, rs);
+        }
+    private:
+        int hover;
+        WireWorld::CellType option;
+        std::vector<sf::RectangleShape> buttons;
+        sf::RectangleShape bg;
+        sf::Sprite s;
+};
+
 int main()
 {
     sf::RenderWindow app(sf::VideoMode(800, 600), "WireWorld");
     app.setFramerateLimit(60);
-    sf::View view(sf::Vector2f(400, 300), sf::Vector2f(800, 600));
+    sf::View view(sf::Vector2f(300, 300), sf::Vector2f(800 * 0.9f, 600));
+    view.setViewport(sf::FloatRect(0, 0, 0.9f, 1.0f));
     sf::Vector2i mousePos;
-    WireWorld ww(64, 64, 64, 64);
+    WireWorld ww(64, 64, 32, 32);
+    Gui gui((sf::Vector2f)app.getSize(), view.getSize());
     bool drag = false;
     while (app.isOpen())
     {
@@ -121,14 +199,26 @@ int main()
             if(event.type == sf::Event::Closed) app.close();
             else if(event.type == sf::Event::KeyPressed && event.key.code == sf::Keyboard::Space) ww.trigPause();
             else if(event.type == sf::Event::KeyPressed && event.key.code == sf::Keyboard::H) ww.trigHidden();
+            else if(event.type == sf::Event::MouseButtonPressed && event.mouseButton.button == sf::Mouse::Left)
+            {
+                if(!gui.getHover())
+                {
+                    unsigned char action = gui.setAction();
+                    if(action != 0) ww.fillAll((WireWorld::CellType)(action - 1));
+                }
+            }
             else if(event.type == sf::Event::MouseButtonPressed && event.mouseButton.button == sf::Mouse::Middle)
             {
                 drag = true;
                 mousePos = sf::Mouse::getPosition(app);
             }
             else if(event.type == sf::Event::MouseButtonReleased && event.mouseButton.button == sf::Mouse::Middle) drag = false;
-            else if(event.type == sf::Event::MouseMoved && drag)
+            else if(event.type == sf::Event::MouseMoved)
             {
+                app.setView(app.getDefaultView());
+                gui.checkHover(app.mapPixelToCoords(sf::Mouse::getPosition(app)));
+                app.setView(view);
+                if(!drag) continue;
                 sf::Vector2i tmpMousePos = sf::Mouse::getPosition(app);
                 view.move(sf::Vector2f(mousePos - tmpMousePos) * zoom);
                 mousePos = tmpMousePos;
@@ -137,19 +227,17 @@ int main()
             {
                 view.zoom(1 / zoom);
                 zoom *= (event.mouseWheelScroll.delta > 0) ? 0.9f : 1.1f;
+                zoom = std::max(std::min(zoom, 10.0f), 0.1f);
                 view.zoom(zoom);
             }
         }
-        if(sf::Mouse::isButtonPressed(sf::Mouse::Left))
-            ww.setCell(WireWorld::CellType::Conductor, app.mapPixelToCoords(sf::Mouse::getPosition(app)));
-        else if(false && sf::Mouse::isButtonPressed(sf::Mouse::Middle))
-            ww.setCell(WireWorld::CellType::ElectronHead, app.mapPixelToCoords(sf::Mouse::getPosition(app)));
-        else if(sf::Mouse::isButtonPressed(sf::Mouse::Right))
-            ww.setCell(WireWorld::CellType::Empty, app.mapPixelToCoords(sf::Mouse::getPosition(app)));
+        if(sf::Mouse::isButtonPressed(sf::Mouse::Left) && gui.getHover())
+            ww.setCell(gui.getSelectedCellType(), app.mapPixelToCoords(sf::Mouse::getPosition(app)));
+        gui.update();
         ww.update();
-        app.clear();
-//        app.setView(app.getDefaultView());
-//        app.drawGui();
+        app.clear(sf::Color::White);
+        app.setView(app.getDefaultView());
+        app.draw(gui);
         app.setView(view);
         app.draw(ww);
         app.display();
